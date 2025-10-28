@@ -37,21 +37,3 @@ $ npm test
 ## License
 
 MIT
-
-
-| module | header |  hono | helmet | hoajs |
-| --- | --- | :---: | :---: | :---: |
-| Content-Security-Policy | 用法 | ✅ | ✅ | ✅ |
-| Cross-origin-Embedder-Policy | 用法| ✅ | ✅ | ✅ |
-| Cross-Origin-Opener-Policy | 用法| ✅ | ✅ | ✅ |
-| Cross-Origin-Resource-Policy | 用法| ✅ | ✅ | ✅ |
-| Origin-Agent-Cluster | 用法| ✅ | ✅ | ✅ |
-| Referrer-Policy | 用法| ✅ | ✅ | ✅ |
-| Strict-Transport-Security | 用法| ✅ | ✅ | ✅ |
-| X-Content-Type-Options | 用法| ✅ | ✅ | ✅ |
-| X-DNS-Prefetch-Control | 用法| ✅ | ✅ | ✅ |
-| X-Download-Options | 用法| ✅ | ✅ | ✅ |
-| X-Frame-Options | 用法| ✅ | ✅ | ✅ |
-| X-Permitted-Cross-Domain-Policies | 用法| ✅ | ✅ | ✅ |
-| X-XSS-Protection | 用法| ✅ | ✅ | ✅ |
-| Permissions-Policy | 用法| ✅ | ❌ | ✅ |
