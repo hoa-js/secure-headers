@@ -6,7 +6,7 @@ import {
 import { tinyRouter } from '@hoajs/tiny-router'
 
 describe('Origin Agent Cluster middleware', () => {
-  it('Should set', async () => {
+  it('Should set Origin Agent Cluster header', async () => {
     const app = new Hoa()
     app.extend(tinyRouter())
     app.get('/test', originAgentCluster(), (ctx) => {
