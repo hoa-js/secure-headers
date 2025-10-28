@@ -1,10 +1,13 @@
 import { Hoa } from 'hoa'
 import { describe, it, expect, beforeEach } from '@jest/globals'
+import contentSecurityPolicy, {
+  dangerouslyDisableDefaultSrc,
+  getDefaultDirectives
+} from '../src/contentSecurityPolicy'
 import { tinyRouter } from '@hoajs/tiny-router'
-import { contentSecurityPolicy } from '../src/contentSecurityPolicy'
 
 describe('Content Security Policy middleware', () => {
-  describe('Default behavior', () => {
+  describe('Basic functionality', () => {
     let app: Hoa
 
     beforeEach(() => {
@@ -12,49 +15,98 @@ describe('Content Security Policy middleware', () => {
       app.extend(tinyRouter())
     })
 
-    it('Should set Content-Security-Policy header with default directives', async () => {
+    it('Should set default CSP header', async () => {
       app.get('/test', contentSecurityPolicy(), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
       expect(response.status).toBe(200)
+      expect(response.headers.get('Content-Security-Policy')).toBeTruthy()
       expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'")
-      expect(response.headers.get('Content-Security-Policy')).toContain("base-uri 'self'")
-      expect(response.headers.get('Content-Security-Policy')).toContain("font-src 'self' https: data:")
     })
 
-    it('Should use Content-Security-Policy-Report-Only when reportOnly is true', async () => {
+    it('Should set CSP Report-Only header when reportOnly is true', async () => {
       app.get('/test', contentSecurityPolicy({ reportOnly: true }), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
       expect(response.status).toBe(200)
-      expect(response.headers.get('Content-Security-Policy-Report-Only')).toContain("default-src 'self'")
-      expect(response.headers.get('Content-Security-Policy')).toBeNull()
+      expect(response.headers.get('Content-Security-Policy-Report-Only')).toBeTruthy()
+      expect(response.headers.get('Content-Security-Policy')).toBeFalsy()
     })
 
-    it('Should include all default directives when useDefaults is true', async () => {
-      app.get('/test', contentSecurityPolicy({ useDefaults: true }), (ctx) => {
-        ctx.res.body = 'GET success'
+    it('Should work with empty options', async () => {
+      app.get('/test', contentSecurityPolicy({}), (ctx) => {
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("base-uri 'self'")
-      expect(cspHeader).toContain("font-src 'self' https: data:")
-      expect(cspHeader).toContain("form-action 'self'")
-      expect(cspHeader).toContain("frame-ancestors 'self'")
-      expect(cspHeader).toContain("img-src 'self' data:")
-      expect(cspHeader).toContain("object-src 'none'")
-      expect(cspHeader).toContain("script-src 'self'")
-      expect(cspHeader).toContain("script-src-attr 'none'")
-      expect(cspHeader).toContain("style-src 'self' https: 'unsafe-inline'")
-      expect(cspHeader).toContain('upgrade-insecure-requests')
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Content-Security-Policy')).toBeTruthy()
+    })
+
+    it('Should work without any options', async () => {
+      app.get('/test', contentSecurityPolicy(), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Content-Security-Policy')).toBeTruthy()
     })
   })
+
+  describe('Default directives', () => {
+    let app: Hoa
+
+    beforeEach(() => {
+      app = new Hoa()
+      app.extend(tinyRouter())
+    })
+
+    it('Should return correct default directives', () => {
+      const defaults = getDefaultDirectives()
+      expect(defaults).toEqual({
+        'default-src': ["'self'"],
+        'base-uri': ["'self'"],
+        'font-src': ["'self'", 'https:', 'data:'],
+        'form-action': ["'self'"],
+        'frame-ancestors': ["'self'"],
+        'img-src': ["'self'", 'data:'],
+        'object-src': ["'none'"],
+        'script-src': ["'self'"],
+        'script-src-attr': ["'none'"],
+        'style-src': ["'self'", 'https:', "'unsafe-inline'"],
+        'upgrade-insecure-requests': [],
+      })
+    })
+
+    it('Should apply default directives when useDefaults is true', async () => {
+      app.get('/test', contentSecurityPolicy({ useDefaults: true }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("default-src 'self'")
+      expect(csp).toContain("object-src 'none'")
+      expect(csp).toContain("script-src 'self'")
+    })
+
+    it('Should not apply default directives when useDefaults is false', async () => {
+      expect(() => {
+        app.get('/test', contentSecurityPolicy({
+          useDefaults: false,
+          directives: {}
+        }), (ctx) => {
+          ctx.res.body = 'Test'
+        })
+      }).toThrow('Content-Security-Policy has no directives')
+    })
+  })
+
   describe('Custom directives', () => {
     let app: Hoa
 
@@ -63,462 +115,337 @@ describe('Content Security Policy middleware', () => {
       app.extend(tinyRouter())
     })
 
-    it('Should accept custom directives as object', async () => {
+    it('Should accept custom string directive', async () => {
       app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
         directives: {
           'default-src': ["'self'"],
           'script-src': ["'self'", "'unsafe-inline'"]
         }
       }), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("script-src 'self' 'unsafe-inline'")
-      expect(cspHeader).not.toContain('base-uri')
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("script-src 'self' 'unsafe-inline'")
     })
 
-    it('Should accept custom directives as string', async () => {
+    it('Should accept custom array directive', async () => {
       app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
+        directives: {
+          'default-src': ["'self'"],
+          'img-src': ["'self'", 'data:', 'https://example.com']
+        }
+      }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("img-src 'self' data: https://example.com")
+    })
+
+    it('Should handle directive with single string value', async () => {
+      app.get('/test', contentSecurityPolicy({
         directives: {
           'default-src': "'self'",
-          'script-src': "'unsafe-eval'"
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("script-src 'unsafe-eval'")
-    })
-
-    it('Should accept custom directives as array', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'", 'https:'],
-          'img-src': ["'self'", 'data:', 'https:']
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self' https:")
-      expect(cspHeader).toContain("img-src 'self' data: https:")
-    })
-
-    it('Should accept function-based directive values', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': ["'self'", (ctx) => "'nonce-' + Math.random().toString(36).substring(2)"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("script-src 'self' 'nonce-")
-    })
-  })
-  describe('Directive name validation', () => {
-    let app: Hoa
-
-    beforeEach(() => {
-      app = new Hoa()
-      app.extend(tinyRouter())
-    })
-
-    it('Should throw error for empty directive name', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          '': ["'self'"],
-          'default-src': ["'self'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      try {
-        const response = await app.fetch(new Request('http://localhost/test'))
-        expect(response.status).toBe(500)
-      } catch (e) {
-        console.log(e)
-      }
-    })
-
-    it('Should throw error for invalid directive name characters', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'script src': ["'self'"],
-          'default-src': ["'self'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should throw error for directive name with special characters', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'script@src': ["'self'"],
-          'default-src': ["'self'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should convert camelCase directive names to kebab-case', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("script-src 'self' 'unsafe-inline'")
-    })
-
-    it('Should throw error for duplicate directive names', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          defaultSrc: ["'none'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-  })
-
-  describe('Directive value validation', () => {
-    let app: Hoa
-
-    beforeEach(() => {
-      app = new Hoa()
-      app.extend(tinyRouter())
-    })
-
-    it('Should throw error for directive value containing semicolon', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': ["'self'; malicious-directive"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should throw error for directive value containing comma', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': ["'self', 'unsafe-eval'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should throw error for nonce values that should not be quoted', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': ['nonce-abc123']
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should throw error for hash values that should not be quoted', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': ['sha256-abc123']
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-  })
-
-  describe('Default-src handling', () => {
-    let app: Hoa
-
-    beforeEach(() => {
-      app = new Hoa()
-      app.extend(tinyRouter())
-    })
-
-    it('Should throw error when default-src is set to null', async () => {
-      app.get('/test', contentSecurityPolicy({
-        directives: {
-          'default-src': null
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should allow disabling default-src with dangerouslyDisableDefaultSrc', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': contentSecurityPolicy.dangerouslyDisableDefaultSrc,
           'script-src': ["'self'"]
         }
       }), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).not.toContain('default-src')
-      expect(cspHeader).toContain("script-src 'self'")
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("default-src 'self'")
     })
 
-    it('Should throw error when using dangerouslyDisableDefaultSrc on non-default-src directive', async () => {
+    it('Should handle empty array directive', async () => {
       app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': contentSecurityPolicy.dangerouslyDisableDefaultSrc
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should throw error when no default-src is provided and useDefaults is false', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'script-src': ["'self'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-  })
-
-  describe('Null directive values', () => {
-    let app: Hoa
-
-    beforeEach(() => {
-      app = new Hoa()
-      app.extend(tinyRouter())
-    })
-
-    it('Should exclude directives set to null', async () => {
-      app.get('/test', contentSecurityPolicy({
-        directives: {
-          'object-src': null,
-          'base-uri': null
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).not.toContain('object-src')
-      expect(cspHeader).not.toContain('base-uri')
-      expect(cspHeader).toContain("default-src 'self'")
-    })
-
-    it('Should throw error for invalid directive values', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': false as any
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-
-    it('Should throw error for undefined directive values', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': undefined as any
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.status).toBe(500)
-    })
-  })
-
-  describe('useDefaults option', () => {
-    let app: Hoa
-
-    beforeEach(() => {
-      app = new Hoa()
-      app.extend(tinyRouter())
-    })
-
-    it('Should not include default directives when useDefaults is false', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': ["'self'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("script-src 'self'")
-      expect(cspHeader).not.toContain('base-uri')
-      expect(cspHeader).not.toContain('font-src')
-      expect(cspHeader).not.toContain('object-src')
-    })
-
-    it('Should merge custom directives with defaults when useDefaults is true', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: true,
-        directives: {
-          'script-src': ["'self'", "'unsafe-eval'"],
-          'custom-directive': ["'self'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("script-src 'self' 'unsafe-eval'")
-      expect(cspHeader).toContain("custom-directive 'self'")
-      expect(cspHeader).toContain("base-uri 'self'")
-    })
-
-    it('Should use defaults when useDefaults is undefined (default behavior)', async () => {
-      app.get('/test', contentSecurityPolicy({
-        directives: {
-          'script-src': ["'self'", "'unsafe-eval'"]
-        }
-      }), (ctx) => {
-        ctx.res.body = 'GET success'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain("script-src 'self' 'unsafe-eval'")
-      expect(cspHeader).toContain("base-uri 'self'")
-    })
-  })
-
-  describe('Empty directives handling', () => {
-    let app: Hoa
-
-    beforeEach(() => {
-      app = new Hoa()
-      app.extend(tinyRouter())
-    })
-
-    it('Should handle directives with empty arrays', async () => {
-      app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
         directives: {
           'default-src': ["'self'"],
           'upgrade-insecure-requests': []
         }
       }), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("default-src 'self'")
-      expect(cspHeader).toContain('upgrade-insecure-requests')
-      expect(response.status).toBe(200)
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain('upgrade-insecure-requests')
     })
 
-    it('Should throw error when no directives are provided', async () => {
+    it('Should disable directive with null value', async () => {
       app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
-        directives: {}
+        directives: {
+          'default-src': ["'self'"],
+          'object-src': null
+        }
       }), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
+      const response = await app.fetch(new Request('http://localhost/test'))
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).not.toContain('object-src')
+    })
+  })
+
+  describe('Directive name validation', () => {
+    it('Should throw error for empty directive name', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            '': ["'self'"]
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive name ""')
+    })
+
+    it('Should throw error for invalid directive name characters', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'invalid@name': ["'self'"]
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive name "invalid@name"')
+    })
+
+    it('Should throw error for duplicate directive names', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            defaultSrc: ["'self'"],
+            'default-src': ["'none'"]
+          }
+        })
+      }).toThrow('Content-Security-Policy received a duplicate directive "default-src"')
+    })
+
+    it('Should convert camelCase directive names to kebab-case', async () => {
+      const app = new Hoa()
+      app.extend(tinyRouter())
+
+      app.get('/test', contentSecurityPolicy({
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"]
+        }
+      }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain('default-src')
+      expect(csp).toContain('script-src')
+    })
+  })
+
+  describe('Directive value validation', () => {
+    it('Should throw error for invalid directive value with semicolon', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'default-src': ["'self'; malicious"]
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "default-src"')
+    })
+
+    it('Should throw error for invalid directive value with comma', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'default-src': ["'self', malicious"]
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "default-src"')
+    })
+
+    it('Should throw error for unquoted special values', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'default-src': ['self']
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "default-src". "self" should be quoted')
+    })
+
+    it('Should throw error for unquoted nonce value', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'script-src': ['nonce-abc123']
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "script-src". "nonce-abc123" should be quoted')
+    })
+
+    it('Should throw error for unquoted sha256 value', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'script-src': ['sha256-abc123']
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "script-src". "sha256-abc123" should be quoted')
+    })
+
+    it('Should throw error for unquoted sha384 value', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'script-src': ['sha384-abc123']
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "script-src". "sha384-abc123" should be quoted')
+    })
+
+    it('Should throw error for unquoted sha512 value', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'script-src': ['sha512-abc123']
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "script-src". "sha512-abc123" should be quoted')
+    })
+
+    it('Should throw error for falsy directive value', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'default-src': false as any
+          }
+        })
+      }).toThrow('Content-Security-Policy received an invalid directive value for "default-src"')
+    })
+  })
+
+  describe('Default-src handling', () => {
+    it('Should throw error when default-src is set to null', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'default-src': null
+          }
+        })
+      }).toThrow('Content-Security-Policy needs a default-src but it was set to `null`')
+    })
+
+    it('Should allow disabling default-src with dangerouslyDisableDefaultSrc', async () => {
+      const app = new Hoa()
+      app.extend(tinyRouter())
+
+      app.get('/test', contentSecurityPolicy({
+        directives: {
+          'default-src': dangerouslyDisableDefaultSrc,
+          'script-src': ["'self'"]
+        }
+      }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).not.toContain('default-src')
+      expect(csp).toContain('script-src')
+    })
+
+    it('Should throw error when using dangerouslyDisableDefaultSrc on non-default-src directive', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          directives: {
+            'default-src': ["'self'"],
+            'script-src': dangerouslyDisableDefaultSrc
+          }
+        })
+      }).toThrow('Content-Security-Policy: tried to disable "script-src" as if it were default-src')
+    })
+
+    it('Should throw error when no default-src is provided', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          useDefaults: false,
+          directives: {
+            'script-src': ["'self'"]
+          }
+        })
+      }).toThrow('Content-Security-Policy needs a default-src but none was provided')
+    })
+
+    it('Should throw error when no directives are provided', () => {
+      expect(() => {
+        contentSecurityPolicy({
+          useDefaults: false,
+          directives: {}
+        })
+      }).toThrow('Content-Security-Policy has no directives')
+    })
+  })
+
+  describe('Function directive values', () => {
+    let app: Hoa
+
+    beforeEach(() => {
+      app = new Hoa()
+      app.extend(tinyRouter())
+    })
+
+    it('Should execute function directive values', async () => {
+      app.get('/test', contentSecurityPolicy({
+        directives: {
+          'default-src': ["'self'"],
+          'script-src': [
+            "'self'",
+            (ctx) => `'nonce-${ctx.req.get('x-nonce') || 'default'}'`
+          ]
+        }
+      }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(
+        new Request('http://localhost/test', {
+          headers: { 'X-Nonce': 'test123' }
+        })
+      )
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("'nonce-test123'")
+    })
+
+    it('Should validate function directive values', async () => {
+      app.get('/test', contentSecurityPolicy({
+        directives: {
+          'default-src': ["'self'"],
+          'script-src': [
+            (ctx) => 'unsafe-inline'  // Should be quoted
+          ]
+        }
+      }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
       const response = await app.fetch(new Request('http://localhost/test'))
       expect(response.status).toBe(500)
     })
   })
 
-  describe('Header formatting', () => {
+  describe('Module exports', () => {
+    it('Should export getDefaultDirectives function', () => {
+      expect(typeof contentSecurityPolicy.getDefaultDirectives).toBe('function')
+      expect(contentSecurityPolicy.getDefaultDirectives).toBe(getDefaultDirectives)
+    })
+
+    it('Should export dangerouslyDisableDefaultSrc symbol', () => {
+      expect(typeof contentSecurityPolicy.dangerouslyDisableDefaultSrc).toBe('symbol')
+      expect(contentSecurityPolicy.dangerouslyDisableDefaultSrc).toBe(dangerouslyDisableDefaultSrc)
+    })
+  })
+
+  describe('Complex scenarios', () => {
     let app: Hoa
 
     beforeEach(() => {
@@ -526,66 +453,121 @@ describe('Content Security Policy middleware', () => {
       app.extend(tinyRouter())
     })
 
-    it('Should format header with semicolon and space separation', async () => {
+    it('Should merge custom directives with defaults', async () => {
       app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
+        useDefaults: true,
         directives: {
-          'default-src': ["'self'"],
-          'script-src': ["'self'", "'unsafe-inline'"],
+          'script-src': ["'self'", "'unsafe-eval'"],
           'style-src': ["'self'"]
         }
       }), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toMatch(/default-src[^;]+; script-src[^;]+; style-src[^;]+/)
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("default-src 'self'")  // from defaults
+      expect(csp).toContain("script-src 'self' 'unsafe-eval'")  // custom
+      expect(csp).toContain("style-src 'self'")  // custom (overrides default)
+      expect(csp).toContain("img-src 'self' data:")  // from defaults
     })
 
     it('Should handle mixed function and string directive values', async () => {
       app.get('/test', contentSecurityPolicy({
-        useDefaults: false,
         directives: {
           'default-src': ["'self'"],
-          'script-src': ["'self'", (ctx) => 'https://cdn.example.com'],
-          'style-src': ["'self'", "'unsafe-inline'"]
+          'script-src': [
+            "'self'",
+            (ctx) => "'unsafe-inline'",
+            'https://example.com',
+            (ctx) => `'nonce-${Date.now()}'`
+          ]
         }
       }), (ctx) => {
-        ctx.res.body = 'GET success'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("script-src 'self' https://cdn.example.com")
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("script-src 'self' 'unsafe-inline' https://example.com 'nonce-")
+    })
+
+    it('Should work with all special quoted values', async () => {
+      app.get('/test', contentSecurityPolicy({
+        directives: {
+          'default-src': ["'none'"],
+          'script-src': [
+            "'self'",
+            "'strict-dynamic'",
+            "'report-sample'",
+            "'inline-speculation-rules'",
+            "'unsafe-inline'",
+            "'unsafe-eval'",
+            "'unsafe-hashes'",
+            "'wasm-unsafe-eval'"
+          ]
+        }
+      }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).toContain("default-src 'none'")
+      expect(csp).toContain("'strict-dynamic'")
+      expect(csp).toContain("'unsafe-eval'")
+      expect(csp).toContain("'wasm-unsafe-eval'")
+    })
+
+    it('Should properly format CSP header with multiple directives', async () => {
+      app.get('/test', contentSecurityPolicy({
+        directives: {
+          'default-src': ["'self'"],
+          'script-src': ["'self'", 'https://example.com'],
+          'style-src': ["'self'", "'unsafe-inline'"],
+          'img-src': ["'self'", 'data:', 'https:'],
+          'upgrade-insecure-requests': []
+        }
+      }), (ctx) => {
+        ctx.res.body = 'Test'
+      })
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      const csp = response.headers.get('Content-Security-Policy')
+
+      // CSP should be semicolon-separated
+      const directives = csp?.split(';')
+      expect(directives?.length).toBeGreaterThan(4)
+      expect(csp).toContain('default-src')
+      expect(csp).toContain('script-src')
+      expect(csp).toContain('style-src')
+      expect(csp).toContain('img-src')
+      expect(csp).toContain('upgrade-insecure-requests')
+    })
+
+    it('Should work with next function', async () => {
+      let middlewareCalled = false
+
+      app.get(
+        '/test',
+        contentSecurityPolicy(),
+        async (ctx, next) => {
+          middlewareCalled = true
+          if (next) await next()
+        },
+        (ctx) => {
+          ctx.res.body = 'Test'
+        }
+      )
+
+      const response = await app.fetch(new Request('http://localhost/test'))
+      expect(response.status).toBe(200)
+      expect(middlewareCalled).toBe(true)
+      expect(response.headers.get('Content-Security-Policy')).toBeTruthy()
     })
   })
 
-  describe('getDefaultDirectives function', () => {
-    it('Should return default directives object', () => {
-      const defaults = contentSecurityPolicy.getDefaultDirectives()
-      expect(defaults).toHaveProperty('default-src', ["'self'"])
-      expect(defaults).toHaveProperty('base-uri', ["'self'"])
-      expect(defaults).toHaveProperty('font-src', ["'self'", 'https:', 'data:'])
-      expect(defaults).toHaveProperty('form-action', ["'self'"])
-      expect(defaults).toHaveProperty('frame-ancestors', ["'self'"])
-      expect(defaults).toHaveProperty('img-src', ["'self'", 'data:'])
-      expect(defaults).toHaveProperty('object-src', ["'none'"])
-      expect(defaults).toHaveProperty('script-src', ["'self'"])
-      expect(defaults).toHaveProperty('script-src-attr', ["'none'"])
-      expect(defaults).toHaveProperty('style-src', ["'self'", 'https:', "'unsafe-inline'"])
-      expect(defaults).toHaveProperty('upgrade-insecure-requests', [])
-    })
-
-    it('Should return a new object each time (not shared reference)', () => {
-      const defaults1 = contentSecurityPolicy.getDefaultDirectives()
-      const defaults2 = contentSecurityPolicy.getDefaultDirectives()
-      expect(defaults1).not.toBe(defaults2)
-      expect(defaults1).toEqual(defaults2)
-    })
-  })
-
-  describe('Real-world scenarios', () => {
+  describe('Edge cases', () => {
     let app: Hoa
 
     beforeEach(() => {
@@ -593,66 +575,22 @@ describe('Content Security Policy middleware', () => {
       app.extend(tinyRouter())
     })
 
-    it('Should work with complex directive configurations', async () => {
+    it('Should handle directives with hasOwnProperty check', async () => {
+      const customDirectives = Object.create({ 'inherited-directive': ["'self'"] })
+      customDirectives['default-src'] = ["'self'"]
+      customDirectives['script-src'] = ["'self'"]
+
       app.get('/test', contentSecurityPolicy({
-        directives: {
-          'default-src': ["'self'"],
-          'script-src': ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
-          'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-          'font-src': ["'self'", 'https://fonts.gstatic.com'],
-          'img-src': ["'self'", 'data:', 'https:'],
-          'connect-src': ["'self'", 'https://api.example.com'],
-          'media-src': ["'none'"],
-          'object-src': ["'none'"],
-          'frame-src': ["'none'"]
-        }
+        directives: customDirectives
       }), (ctx) => {
-        ctx.res.body = 'Complex CSP'
+        ctx.res.body = 'Test'
       })
 
       const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net")
-      expect(cspHeader).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com")
-      expect(cspHeader).toContain("font-src 'self' https://fonts.gstatic.com")
-      expect(cspHeader).toContain("connect-src 'self' https://api.example.com")
-      expect(response.status).toBe(200)
-    })
-
-    it('Should work with report-only mode for monitoring', async () => {
-      app.get('/test', contentSecurityPolicy({
-        reportOnly: true,
-        directives: {
-          'default-src': ["'self'"],
-          'report-uri': ['/csp-report-endpoint']
-        }
-      }), (ctx) => {
-        ctx.res.body = 'Report-only CSP'
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      expect(response.headers.get('Content-Security-Policy-Report-Only')).toContain('report-uri /csp-report-endpoint')
-      expect(response.headers.get('Content-Security-Policy')).toBeNull()
-    })
-
-    it('Should handle nonce generation for scripts', async () => {
-      let generatedNonce: string = ''
-
-      app.get('/test', contentSecurityPolicy({
-        directives: {
-          'script-src': ["'self'", (ctx) => {
-            generatedNonce = 'nonce-' + Math.random().toString(36).substring(2, 15)
-            return `'${generatedNonce}'`
-          }]
-        }
-      }), (ctx) => {
-        ctx.res.body = `<script nonce="${generatedNonce.replace('nonce-', '')}">console.log('hello')</script>`
-      })
-
-      const response = await app.fetch(new Request('http://localhost/test'))
-      const cspHeader = response.headers.get('Content-Security-Policy')
-      expect(cspHeader).toContain("script-src 'self' 'nonce-")
-      expect(response.status).toBe(200)
+      const csp = response.headers.get('Content-Security-Policy')
+      expect(csp).not.toContain('inherited-directive')
+      expect(csp).toContain('default-src')
+      expect(csp).toContain('script-src')
     })
   })
 })

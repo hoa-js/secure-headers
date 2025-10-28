@@ -1,7 +1,40 @@
 import type { HoaContext, HoaMiddleware } from 'hoa'
 
-const dashify = (str: string) => str.replace(/([A-Z])/g, '-$1').toLowerCase()
-const SHOULD_QUOTE_DIRECTIVE_VALUE = new Set([
+type ContentSecurityPolicyDirectiveValueFunction = (
+  ctx: HoaContext,
+) => string
+
+type ContentSecurityPolicyDirectiveValue =
+  | string
+  | ContentSecurityPolicyDirectiveValueFunction
+
+export interface ContentSecurityPolicyOptions {
+  useDefaults?: boolean;
+  directives?: Record<
+    string,
+    | null
+    | Iterable<ContentSecurityPolicyDirectiveValue>
+    | typeof dangerouslyDisableDefaultSrc
+  >;
+  reportOnly?: boolean;
+}
+
+type NormalizedDirectives = Map<
+  string,
+  Iterable<ContentSecurityPolicyDirectiveValue>
+>
+
+interface ContentSecurityPolicy {
+  (
+    options?: Readonly<ContentSecurityPolicyOptions>,
+  ): HoaMiddleware
+  getDefaultDirectives: typeof getDefaultDirectives;
+  dangerouslyDisableDefaultSrc: typeof dangerouslyDisableDefaultSrc;
+}
+
+const dangerouslyDisableDefaultSrc = Symbol('dangerouslyDisableDefaultSrc')
+
+const SHOULD_BE_QUOTED: ReadonlySet<string> = new Set([
   'none',
   'self',
   'strict-dynamic',
@@ -12,22 +45,11 @@ const SHOULD_QUOTE_DIRECTIVE_VALUE = new Set([
   'unsafe-hashes',
   'wasm-unsafe-eval',
 ])
-const isValidDirectiveValueEntry = (ctx: HoaContext, directiveName: string, directiveValue: string): void => {
-  const prefix = ['nonce-', 'sha256-', 'sha384-', 'sha512-']
-  if (SHOULD_QUOTE_DIRECTIVE_VALUE.has(directiveValue) || prefix.some((p) => directiveValue.startsWith(p))) {
-    ctx.throw(500, `
-            Content-Security-Policy received an invalid directive value for ${JSON.stringify(directiveName)}: ${JSON.stringify(directiveValue)}
-        `)
-  }
-}
-const isValidDirectiveValue = (ctx: HoaContext, directiveName: string, directiveValue: string): void => {
-  if (/;|,/.test(directiveValue)) {
-    ctx.throw(500, `
-            Content-Security-Policy received an invalid directive value for ${JSON.stringify(directiveName)}: ${JSON.stringify(directiveValue)}
-        `)
-  }
-}
-const getDefaultDirectives = () => ({
+
+const getDefaultDirectives = (): Record<
+  string,
+  Iterable<ContentSecurityPolicyDirectiveValue>
+> => ({
   'default-src': ["'self'"],
   'base-uri': ["'self'"],
   'font-src': ["'self'", 'https:', 'data:'],
@@ -40,160 +62,205 @@ const getDefaultDirectives = () => ({
   'style-src': ["'self'", 'https:', "'unsafe-inline'"],
   'upgrade-insecure-requests': [],
 })
-type ContentSecurityPolicyDirectiveValue = Iterable<string | ((ctx: HoaContext) => string)>
 
-const dangerouslyDisableDefaultSrc = Symbol('dangerouslyDisableDefaultSrc')
+const dashify = (str: string): string =>
+  str.replace(/[A-Z]/g, (capitalLetter) => '-' + capitalLetter.toLowerCase())
 
-export interface ContentSecurityPolicyOptions {
-  useDefaults?: boolean;
-  directives?: Record<
-        string,
-        | null
-        | ContentSecurityPolicyDirectiveValue
-        | typeof dangerouslyDisableDefaultSrc
-    >;
-  reportOnly?: boolean;
-}
-export function contentSecurityPolicy (options: ContentSecurityPolicyOptions = {}): HoaMiddleware {
-  const headerName = options.reportOnly ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy'
-  return async function contentSecurityPolicyMiddleware (ctx: HoaContext, next) {
-    await next()
-    const normalizedDirectives = normalizeDirectives(ctx, options)
-    const headers = getHeaderValue(ctx, normalizedDirectives)
-    ctx.res.set(headerName, headers)
+const assertDirectiveValueIsValid = (
+  directiveName: string,
+  directiveValue: string
+): void => {
+  if (/;|,/.test(directiveValue)) {
+    throw new Error(
+      `Content-Security-Policy received an invalid directive value for ${JSON.stringify(
+        directiveName
+      )}`
+    )
   }
 }
 
-function normalizeDirectives (ctx: HoaContext, options: ContentSecurityPolicyOptions) {
-  const useDefaults = options.useDefaults ?? true
-  const defaultDirectives = getDefaultDirectives()
-  const rawDirectives = options.directives ?? defaultDirectives
+const assertDirectiveValueEntryIsValid = (
+  directiveName: string,
+  directiveValueEntry: string
+): void => {
+  if (
+    SHOULD_BE_QUOTED.has(directiveValueEntry) ||
+    directiveValueEntry.startsWith('nonce-') ||
+    directiveValueEntry.startsWith('sha256-') ||
+    directiveValueEntry.startsWith('sha384-') ||
+    directiveValueEntry.startsWith('sha512-')
+  ) {
+    throw new Error(
+      `Content-Security-Policy received an invalid directive value for ${JSON.stringify(
+        directiveName
+      )}. ${JSON.stringify(directiveValueEntry)} should be quoted`
+    )
+  }
+}
 
-  const result = new Map<string, ContentSecurityPolicyDirectiveValue>()
-  const uniqueDirectiveNames = new Set<string>()
-  const explictDisabledDirectives = new Set<string>()
+function normalizeDirectives (
+  options: Readonly<ContentSecurityPolicyOptions>
+): NormalizedDirectives {
+  const defaultDirectives = getDefaultDirectives()
+
+  const { useDefaults = true, directives: rawDirectives = defaultDirectives } =
+    options
+
+  const result: NormalizedDirectives = new Map()
+  const directiveNamesSeen = new Set<string>()
+  const directivesExplicitlyDisabled = new Set<string>()
 
   for (const rawDirectiveName in rawDirectives) {
     if (!Object.hasOwn(rawDirectives, rawDirectiveName)) {
       continue
     }
 
-    if (!rawDirectiveName || /[^a-zA-Z0-9-]/.test(rawDirectiveName)) {
-      ctx.throw(
-        500,
-                `
-                Content-Security-Policy received an invalid directive name: ${JSON.stringify(rawDirectiveName)}
-                `
+    if (
+      rawDirectiveName.length === 0 ||
+      /[^a-zA-Z0-9-]/.test(rawDirectiveName)
+    ) {
+      throw new Error(
+        `Content-Security-Policy received an invalid directive name ${JSON.stringify(
+          rawDirectiveName
+        )}`
       )
     }
 
     const directiveName = dashify(rawDirectiveName)
 
-    if (uniqueDirectiveNames.has(directiveName)) {
-      ctx.throw(
-        500,
-                `
-                Content-Security-Policy received a duplicate directive: ${JSON.stringify(directiveName)}
-                `
+    if (directiveNamesSeen.has(directiveName)) {
+      throw new Error(
+        `Content-Security-Policy received a duplicate directive ${JSON.stringify(
+          directiveName
+        )}`
       )
     }
-    uniqueDirectiveNames.add(directiveName)
+    directiveNamesSeen.add(directiveName)
 
     const rawDirectiveValue = rawDirectives[rawDirectiveName]
-    let directiveValue: ContentSecurityPolicyDirectiveValue
-
+    let directiveValue: Iterable<ContentSecurityPolicyDirectiveValue>
     if (rawDirectiveValue === null) {
       if (directiveName === 'default-src') {
-        ctx.throw(
-          500,
-                    `Content-Security-Policy needs a default-src but it was set to 'null'.
-                    If you really want to disable it, set it value to 'contentSecurityPolicy.dangerouslyDisableDefaultSrc'`
+        throw new Error(
+          'Content-Security-Policy needs a default-src but it was set to `null`. If you really want to disable it, set it to `contentSecurityPolicy.dangerouslyDisableDefaultSrc`.'
         )
       }
-      explictDisabledDirectives.add(directiveName)
+      directivesExplicitlyDisabled.add(directiveName)
       continue
     } else if (typeof rawDirectiveValue === 'string') {
       directiveValue = [rawDirectiveValue]
+    } else if (!rawDirectiveValue) {
+      throw new Error(
+        `Content-Security-Policy received an invalid directive value for ${JSON.stringify(
+          directiveName
+        )}`
+      )
     } else if (rawDirectiveValue === dangerouslyDisableDefaultSrc) {
       if (directiveName === 'default-src') {
-        explictDisabledDirectives.add('default-src')
+        directivesExplicitlyDisabled.add('default-src')
         continue
       } else {
-        ctx.throw(
-          500,
-                    `
-                    Content-Security-Policy: tried to disable ${JSON.stringify(directiveName)} as if it were default-src; simply omit the key
-                    `
+        throw new Error(
+          `Content-Security-Policy: tried to disable ${JSON.stringify(
+            directiveName
+          )} as if it were default-src; simply omit the key`
         )
       }
-    } else if (!rawDirectiveValue) {
-      ctx.throw(
-        500,
-                `
-                Content-Security-Policy received an invalid directive value for ${JSON.stringify(directiveName)}: ${JSON.stringify(rawDirectiveValue)}
-                `
-      )
     } else {
       directiveValue = rawDirectiveValue
     }
 
-    for (const v of directiveValue) {
-      if (typeof v !== 'string') continue
-      isValidDirectiveValue(ctx, directiveName, v)
-      isValidDirectiveValueEntry(ctx, directiveName, v)
+    for (const element of directiveValue) {
+      if (typeof element !== 'string') continue
+      assertDirectiveValueIsValid(directiveName, element)
+      assertDirectiveValueEntryIsValid(directiveName, element)
     }
+
     result.set(directiveName, directiveValue)
   }
 
   if (useDefaults) {
-    Object.entries(defaultDirectives).forEach(([defaultDirectiveName, defaultDirectiveValue]) => {
-      if (!result.has(defaultDirectiveName) && !explictDisabledDirectives.has(defaultDirectiveName)) {
-        result.set(defaultDirectiveName, defaultDirectiveValue)
+    Object.entries(defaultDirectives).forEach(
+      ([defaultDirectiveName, defaultDirectiveValue]) => {
+        if (
+          !result.has(defaultDirectiveName) &&
+          !directivesExplicitlyDisabled.has(defaultDirectiveName)
+        ) {
+          result.set(defaultDirectiveName, defaultDirectiveValue)
+        }
       }
-    })
+    )
   }
 
   if (!result.size) {
-    ctx.throw(500, 'Content-Security-Policy has no directives. Either set some or disable it')
+    throw new Error(
+      'Content-Security-Policy has no directives. Either set some or disable the header'
+    )
   }
-
-  if (!result.has('default-src') && !explictDisabledDirectives.has('default-src')) {
-    ctx.throw(500,
-            `
-          Content-Security-Policy needs a default-src but none was provided.
-          If you really want to disable it, set it to 'contentSecurityPolicy.dangerouslyDisableDefaultSrc'
-          `
+  if (
+    !result.has('default-src') &&
+    !directivesExplicitlyDisabled.has('default-src')
+  ) {
+    throw new Error(
+      'Content-Security-Policy needs a default-src but none was provided. If you really want to disable it, set it to `contentSecurityPolicy.dangerouslyDisableDefaultSrc`.'
     )
   }
 
   return result
 }
 
-function getHeaderValue (ctx: HoaContext, directives: ReturnType<typeof normalizeDirectives>): string {
+function getHeaderValue (
+  ctx: HoaContext,
+  normalizedDirectives: Readonly<NormalizedDirectives>
+): string {
   const result: string[] = []
 
-  for (const [directiveName, rawDirectiveValue] of directives) {
+  for (const [directiveName, rawDirectiveValue] of normalizedDirectives) {
     let directiveValue = ''
-    for (const v of rawDirectiveValue) {
-      if (typeof v === 'function') {
-        const _value = v(ctx)
-        isValidDirectiveValue(ctx, directiveName, _value)
-        isValidDirectiveValueEntry(ctx, directiveName, _value)
-        directiveValue += ' ' + _value
+    for (const element of rawDirectiveValue) {
+      if (typeof element === 'function') {
+        const newElement = element(ctx)
+        assertDirectiveValueEntryIsValid(directiveName, newElement)
+        directiveValue += ' ' + newElement
       } else {
-        directiveValue += ' ' + v
+        directiveValue += ' ' + element
       }
     }
+
     if (directiveValue) {
-      isValidDirectiveValue(ctx, directiveName, directiveValue)
+      assertDirectiveValueIsValid(directiveName, directiveValue)
       result.push(`${directiveName}${directiveValue}`)
     } else {
       result.push(directiveName)
     }
   }
 
-  return result.join('; ')
+  return result.join(';')
 }
-contentSecurityPolicy.dangerouslyDisableDefaultSrc = dangerouslyDisableDefaultSrc
+
+const contentSecurityPolicy: ContentSecurityPolicy =
+  function contentSecurityPolicy (
+    options: Readonly<ContentSecurityPolicyOptions> = {}
+  ): HoaMiddleware {
+    const headerName = options.reportOnly
+      ? 'Content-Security-Policy-Report-Only'
+      : 'Content-Security-Policy'
+
+    const normalizedDirectives = normalizeDirectives(options)
+
+    return async function contentSecurityPolicyMiddleware (
+      ctx: HoaContext,
+      next?: () => Promise<void>
+    ) {
+      const result = getHeaderValue(ctx, normalizedDirectives)
+      ctx.res.set(headerName, result)
+      await next()
+    }
+  }
 contentSecurityPolicy.getDefaultDirectives = getDefaultDirectives
+contentSecurityPolicy.dangerouslyDisableDefaultSrc =
+  dangerouslyDisableDefaultSrc
+
 export default contentSecurityPolicy
+
+export { contentSecurityPolicy, dangerouslyDisableDefaultSrc, getDefaultDirectives }
