@@ -12,7 +12,7 @@ $ npm i @hoajs/secure-headers --save
 
 ```js
 import { Hoa } from 'hoa'
-import {secureHeaders } from '@hoajs/secure-headers'
+import { secureHeaders } from '@hoajs/secure-headers'
 
 const app = new Hoa()
 app.use(secureHeaders())

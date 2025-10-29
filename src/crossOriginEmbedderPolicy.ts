@@ -31,7 +31,7 @@ export function crossOriginEmbedderPolicy (
 
   return async function crossOriginEmbedderPolicyMiddleware (
     ctx: HoaContext,
-    next?: () => Promise<void>
+    next: () => Promise<void>
   ) {
     ctx.res.set('Cross-Origin-Embedder-Policy', headerValue)
     await next()

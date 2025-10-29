@@ -250,7 +250,7 @@ const contentSecurityPolicy: ContentSecurityPolicy =
 
     return async function contentSecurityPolicyMiddleware (
       ctx: HoaContext,
-      next?: () => Promise<void>
+      next: () => Promise<void>
     ) {
       const result = getHeaderValue(ctx, normalizedDirectives)
       ctx.res.set(headerName, result)
