@@ -1,14 +1,13 @@
 import type { HoaContext, HoaMiddleware } from 'hoa'
 
 export interface CrossOriginEmbedderPolicyOptions {
-  policy?: AllowedPolicy
+  policy?: 'require-corp' | 'credentialless' | 'unsafe-none'
 }
-type AllowedPolicy = typeof ALLOWED_POLICIES extends Set<infer T> ? T : never
 const ALLOWED_POLICIES = new Set([
   'require-corp',
   'credentialless',
   'unsafe-none',
-] as const)
+])
 
 function getHeaderValueFromOptions ({
   policy = 'require-corp',

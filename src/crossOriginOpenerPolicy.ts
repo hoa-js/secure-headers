@@ -1,10 +1,9 @@
 import type { HoaContext, HoaMiddleware } from 'hoa'
 
 export interface CrossOriginOpenerPolicyOptions {
-  policy?: AllowedPolicy
+  policy?: 'same-origin' | 'same-origin-allow-popups' | 'unsafe-none'
 }
-type AllowedPolicy = typeof ALLOWED_POLICIES extends Set<infer T> ? T : never
-const ALLOWED_POLICIES = new Set(['same-origin', 'same-origin-allow-popups', 'unsafe-none'] as const)
+const ALLOWED_POLICIES = new Set(['same-origin', 'same-origin-allow-popups', 'unsafe-none'])
 
 function getHeaderValueFromOptions ({
   policy = 'same-origin',

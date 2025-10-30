@@ -1,10 +1,9 @@
 import type { HoaContext, HoaMiddleware } from 'hoa'
 
 export interface CrossOriginResourcePolicyOptions {
-  policy?: AllowedPolicy
+  policy?: 'same-origin' | 'same-site' | 'cross-origin'
 }
-type AllowedPolicy = typeof ALLOWED_POLICIES extends Set<infer T> ? T : never
-const ALLOWED_POLICIES = new Set(['same-origin', 'same-site', 'cross-origin'] as const)
+const ALLOWED_POLICIES = new Set(['same-origin', 'same-site', 'cross-origin'])
 
 function getHeaderValueFromOptions ({
   policy = 'same-origin',
@@ -13,9 +12,9 @@ function getHeaderValueFromOptions ({
     return policy
   } else {
     throw new Error(
-            `Cross-Origin-Resource-Policy does not support the ${JSON.stringify(
-                policy
-            )} policy`
+      `Cross-Origin-Resource-Policy does not support the ${JSON.stringify(
+        policy
+      )} policy`
     )
   }
 }
